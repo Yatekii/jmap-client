@@ -18,14 +18,14 @@ use crate::{
     },
     Error,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use ahash::AHashSet;
 use base64::{engine::general_purpose, Engine};
 #[cfg(feature = "blocking")]
 use reqwest::blocking::{Client as HttpClient, Response};
-use reqwest::{
-    header::{self},
-    redirect,
-};
+use reqwest::header::{self};
+#[cfg(not(target_arch = "wasm32"))]
+use reqwest::redirect;
 #[cfg(feature = "async")]
 use reqwest::{Client as HttpClient, Response};
 use serde::de::DeserializeOwned;
@@ -52,6 +52,7 @@ pub struct Client {
     session_url: String,
     api_url: String,
     session_updated: AtomicBool,
+    #[cfg(not(target_arch = "wasm32"))]
     trusted_hosts: Arc<AHashSet<String>>,
 
     upload_url: Vec<URLPart<blob::URLParameter>>,
@@ -72,6 +73,7 @@ pub struct Client {
 
 pub struct ClientBuilder {
     credentials: Option<Credentials>,
+    #[cfg(not(target_arch = "wasm32"))]
     trusted_hosts: AHashSet<String>,
     forwarded_for: Option<String>,
     accept_invalid_certs: bool,
@@ -91,6 +93,7 @@ impl ClientBuilder {
     pub fn new() -> Self {
         Self {
             credentials: None,
+            #[cfg(not(target_arch = "wasm32"))]
             trusted_hosts: AHashSet::new(),
             timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
             forwarded_for: None,
@@ -162,6 +165,9 @@ impl ClientBuilder {
     /// The list can be changed after the `Client` has been created by using [Client.set_follow_redirects()](struct.Client.html#method.set_follow_redirects).
     ///
     /// The client will follow at most 5 redirects.
+    ///
+    /// Not available on `wasm32` targets — the browser fetch API handles redirects internally and does not expose policy hooks.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn follow_redirects(
         mut self,
         trusted_hosts: impl IntoIterator<Item = impl Into<String>>,
@@ -204,30 +210,37 @@ impl ClientBuilder {
             );
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         let trusted_hosts = Arc::new(self.trusted_hosts);
 
-        let trusted_hosts_ = trusted_hosts.clone();
         let session_url = format!("{}/.well-known/jmap", url);
+
+        let builder = HttpClient::builder()
+            .timeout(self.timeout)
+            .danger_accept_invalid_certs(self.accept_invalid_certs)
+            .default_headers(headers.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = {
+            let trusted_hosts_ = trusted_hosts.clone();
+            builder.redirect(redirect::Policy::custom(move |attempt| {
+                if attempt.previous().len() > 5 {
+                    attempt.error("Too many redirects.")
+                } else if matches!( attempt.url().host_str(), Some(host) if trusted_hosts_.contains(host) )
+                {
+                    attempt.follow()
+                } else {
+                    let message = format!(
+                        "Aborting redirect request to unknown host '{}'.",
+                        attempt.url().host_str().unwrap_or("")
+                    );
+                    attempt.error(message)
+                }
+            }))
+        };
+
         let session: Session = serde_json::from_slice(
             &Client::handle_error(
-                HttpClient::builder()
-                    .timeout(self.timeout)
-                    .danger_accept_invalid_certs(self.accept_invalid_certs)
-                    .redirect(redirect::Policy::custom(move |attempt| {
-                        if attempt.previous().len() > 5 {
-                            attempt.error("Too many redirects.")
-                        } else if matches!( attempt.url().host_str(), Some(host) if trusted_hosts_.contains(host) )
-                        {
-                                attempt.follow()
-                        } else {
-                            let message = format!(
-                                "Aborting redirect request to unknown host '{}'.",
-                                attempt.url().host_str().unwrap_or("")
-                            );
-                            attempt.error(message)
-                        }
-                    }))
-                    .default_headers(headers.clone())
+                builder
                     .build()?
                     .get(&session_url)
                     .send()
@@ -259,6 +272,7 @@ impl ClientBuilder {
             session_url,
             session_updated: true.into(),
             accept_invalid_certs: self.accept_invalid_certs,
+            #[cfg(not(target_arch = "wasm32"))]
             trusted_hosts,
             #[cfg(feature = "websockets")]
             authorization,
@@ -282,6 +296,7 @@ impl Client {
         self
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_follow_redirects(
         &mut self,
         trusted_hosts: impl IntoIterator<Item = impl Into<String>>,
@@ -306,6 +321,7 @@ impl Client {
         &self.headers
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn redirect_policy(&self) -> redirect::Policy {
         let trusted_hosts = self.trusted_hosts.clone();
         redirect::Policy::custom(move |attempt| {
@@ -332,13 +348,16 @@ impl Client {
     where
         R: DeserializeOwned,
     {
+        let builder = HttpClient::builder()
+            .danger_accept_invalid_certs(self.accept_invalid_certs)
+            .timeout(self.timeout)
+            .default_headers(self.headers.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.redirect(self.redirect_policy());
+
         let response: response::Response<R> = serde_json::from_slice(
             &Client::handle_error(
-                HttpClient::builder()
-                    .redirect(self.redirect_policy())
-                    .danger_accept_invalid_certs(self.accept_invalid_certs)
-                    .timeout(self.timeout)
-                    .default_headers(self.headers.clone())
+                builder
                     .build()?
                     .post(&self.api_url)
                     .body(serde_json::to_string(&request)?)
@@ -359,13 +378,16 @@ impl Client {
 
     #[maybe_async::maybe_async]
     pub async fn refresh_session(&self) -> crate::Result<()> {
+        let builder = HttpClient::builder()
+            .timeout(Duration::from_millis(DEFAULT_TIMEOUT_MS))
+            .danger_accept_invalid_certs(self.accept_invalid_certs)
+            .default_headers(self.headers.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.redirect(self.redirect_policy());
+
         let session: Session = serde_json::from_slice(
             &Client::handle_error(
-                HttpClient::builder()
-                    .timeout(Duration::from_millis(DEFAULT_TIMEOUT_MS))
-                    .danger_accept_invalid_certs(self.accept_invalid_certs)
-                    .redirect(self.redirect_policy())
-                    .default_headers(self.headers.clone())
+                builder
                     .build()?
                     .get(&self.session_url)
                     .send()

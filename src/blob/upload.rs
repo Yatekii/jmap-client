@@ -59,13 +59,16 @@ impl Client {
             }
         }
 
+        let builder = HttpClient::builder()
+            .timeout(self.timeout())
+            .danger_accept_invalid_certs(self.accept_invalid_certs)
+            .default_headers(self.headers().clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.redirect(self.redirect_policy());
+
         serde_json::from_slice::<UploadResponse>(
             &Client::handle_error(
-                HttpClient::builder()
-                    .timeout(self.timeout())
-                    .danger_accept_invalid_certs(self.accept_invalid_certs)
-                    .redirect(self.redirect_policy())
-                    .default_headers(self.headers().clone())
+                builder
                     .build()?
                     .post(upload_url)
                     .header(

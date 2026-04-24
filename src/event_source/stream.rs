@@ -72,12 +72,15 @@ impl Client {
             );
         }
 
+        let builder = reqwest::Client::builder()
+            .connect_timeout(self.timeout())
+            .danger_accept_invalid_certs(self.accept_invalid_certs)
+            .default_headers(headers);
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.redirect(self.redirect_policy());
+
         let mut stream = Client::handle_error(
-            reqwest::Client::builder()
-                .connect_timeout(self.timeout())
-                .danger_accept_invalid_certs(self.accept_invalid_certs)
-                .redirect(self.redirect_policy())
-                .default_headers(headers)
+            builder
                 .build()?
                 .get(event_source_url)
                 .send()

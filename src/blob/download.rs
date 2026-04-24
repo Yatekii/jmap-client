@@ -51,12 +51,15 @@ impl Client {
         let mut headers = self.headers().clone();
         headers.remove(CONTENT_TYPE);
 
+        let builder = HttpClient::builder()
+            .timeout(self.timeout())
+            .danger_accept_invalid_certs(self.accept_invalid_certs)
+            .default_headers(headers);
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.redirect(self.redirect_policy());
+
         Client::handle_error(
-            HttpClient::builder()
-                .timeout(self.timeout())
-                .danger_accept_invalid_certs(self.accept_invalid_certs)
-                .redirect(self.redirect_policy())
-                .default_headers(headers)
+            builder
                 .build()?
                 .get(download_url)
                 .send()
