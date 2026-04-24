@@ -63,6 +63,7 @@ pub struct Client {
     headers: header::HeaderMap,
     default_account_id: String,
     timeout: Duration,
+    #[cfg(feature = "accept_invalid_certs")]
     pub(crate) accept_invalid_certs: bool,
 
     #[cfg(feature = "websockets")]
@@ -76,6 +77,7 @@ pub struct ClientBuilder {
     #[cfg(not(target_arch = "wasm32"))]
     trusted_hosts: AHashSet<String>,
     forwarded_for: Option<String>,
+    #[cfg(feature = "accept_invalid_certs")]
     accept_invalid_certs: bool,
     timeout: Duration,
 }
@@ -97,6 +99,7 @@ impl ClientBuilder {
             trusted_hosts: AHashSet::new(),
             timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
             forwarded_for: None,
+            #[cfg(feature = "accept_invalid_certs")]
             accept_invalid_certs: false,
         }
     }
@@ -151,10 +154,13 @@ impl ClientBuilder {
     ///
     /// By default certificates are validated.
     ///
+    /// Only available when the `accept_invalid_certs` cargo feature is enabled.
+    ///
     /// # Warning
     /// **It is not suggested to use this approach in production;** this method should be used only for testing and as a last resort.
     ///
     /// [Read more in the reqwest docs](https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html#method.danger_accept_invalid_certs)
+    #[cfg(feature = "accept_invalid_certs")]
     pub fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
         self.accept_invalid_certs = accept_invalid_certs;
         self
@@ -217,8 +223,9 @@ impl ClientBuilder {
 
         let builder = HttpClient::builder()
             .timeout(self.timeout)
-            .danger_accept_invalid_certs(self.accept_invalid_certs)
             .default_headers(headers.clone());
+        #[cfg(feature = "accept_invalid_certs")]
+        let builder = builder.danger_accept_invalid_certs(self.accept_invalid_certs);
         #[cfg(not(target_arch = "wasm32"))]
         let builder = {
             let trusted_hosts_ = trusted_hosts.clone();
@@ -271,6 +278,7 @@ impl ClientBuilder {
             session: parking_lot::Mutex::new(Arc::new(session)),
             session_url,
             session_updated: true.into(),
+            #[cfg(feature = "accept_invalid_certs")]
             accept_invalid_certs: self.accept_invalid_certs,
             #[cfg(not(target_arch = "wasm32"))]
             trusted_hosts,
@@ -349,9 +357,10 @@ impl Client {
         R: DeserializeOwned,
     {
         let builder = HttpClient::builder()
-            .danger_accept_invalid_certs(self.accept_invalid_certs)
             .timeout(self.timeout)
             .default_headers(self.headers.clone());
+        #[cfg(feature = "accept_invalid_certs")]
+        let builder = builder.danger_accept_invalid_certs(self.accept_invalid_certs);
         #[cfg(not(target_arch = "wasm32"))]
         let builder = builder.redirect(self.redirect_policy());
 
@@ -380,8 +389,9 @@ impl Client {
     pub async fn refresh_session(&self) -> crate::Result<()> {
         let builder = HttpClient::builder()
             .timeout(Duration::from_millis(DEFAULT_TIMEOUT_MS))
-            .danger_accept_invalid_certs(self.accept_invalid_certs)
             .default_headers(self.headers.clone());
+        #[cfg(feature = "accept_invalid_certs")]
+        let builder = builder.danger_accept_invalid_certs(self.accept_invalid_certs);
         #[cfg(not(target_arch = "wasm32"))]
         let builder = builder.redirect(self.redirect_policy());
 

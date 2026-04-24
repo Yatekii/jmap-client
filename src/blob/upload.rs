@@ -61,8 +61,9 @@ impl Client {
 
         let builder = HttpClient::builder()
             .timeout(self.timeout())
-            .danger_accept_invalid_certs(self.accept_invalid_certs)
             .default_headers(self.headers().clone());
+        #[cfg(feature = "accept_invalid_certs")]
+        let builder = builder.danger_accept_invalid_certs(self.accept_invalid_certs);
         #[cfg(not(target_arch = "wasm32"))]
         let builder = builder.redirect(self.redirect_policy());
 

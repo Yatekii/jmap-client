@@ -36,6 +36,8 @@ blocking = ["reqwest/blocking", "maybe-async/is_sync"]
 ring = ["rustls/ring"]
 aws_lc_rs = ["rustls/aws_lc_rs"]
 aws-lc-rs = ["aws_lc_rs"]
+# Opt-in to disabling TLS certificate validation. Only enable for testing.
+accept_invalid_certs = []
 debug = []
 
 [lib]

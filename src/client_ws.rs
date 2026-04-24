@@ -9,11 +9,14 @@
  * except according to those terms.
  */
 
-use std::{pin::Pin, sync::Arc};
+use std::pin::Pin;
+#[cfg(feature = "accept_invalid_certs")]
+use std::sync::Arc;
 
 use ahash::AHashMap;
 use futures_util::{stream::SplitSink, SinkExt, Stream, StreamExt};
 use reqwest::header::SEC_WEBSOCKET_PROTOCOL;
+#[cfg(feature = "accept_invalid_certs")]
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     ClientConfig, SignatureScheme,
@@ -22,8 +25,10 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
     tungstenite::{client::IntoClientRequest, Message},
-    Connector, MaybeTlsStream, WebSocketStream,
+    MaybeTlsStream, WebSocketStream,
 };
+#[cfg(feature = "accept_invalid_certs")]
+use tokio_tungstenite::Connector;
 
 use crate::{
     client::Client,
@@ -160,10 +165,12 @@ pub struct WsStream {
     req_id: usize,
 }
 
+#[cfg(feature = "accept_invalid_certs")]
 #[doc(hidden)]
 #[derive(Debug)]
 struct DummyVerifier;
 
+#[cfg(feature = "accept_invalid_certs")]
 impl ServerCertVerifier for DummyVerifier {
     fn verify_server_cert(
         &self,
@@ -232,6 +239,7 @@ impl Client {
             .headers_mut()
             .insert(SEC_WEBSOCKET_PROTOCOL, "jmap".parse().unwrap());
 
+        #[cfg(feature = "accept_invalid_certs")]
         let (stream, _) = if self.accept_invalid_certs & capabilities.url().starts_with("wss") {
             tokio_tungstenite::connect_async_tls_with_config(
                 request,
@@ -249,6 +257,8 @@ impl Client {
         } else {
             tokio_tungstenite::connect_async(request).await?
         };
+        #[cfg(not(feature = "accept_invalid_certs"))]
+        let (stream, _) = tokio_tungstenite::connect_async(request).await?;
         let (tx, mut rx) = stream.split();
 
         *self.ws.lock().await = WsStream { tx, req_id: 0 }.into();
