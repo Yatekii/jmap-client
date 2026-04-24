@@ -66,9 +66,10 @@ pub struct Client {
     #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
     pub(crate) accept_invalid_certs: bool,
 
-    #[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
+    #[cfg(feature = "websockets")]
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) authorization: String,
-    #[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
+    #[cfg(feature = "websockets")]
     pub(crate) ws: tokio::sync::Mutex<Option<crate::client_ws::WsStream>>,
 }
 
@@ -282,12 +283,12 @@ impl ClientBuilder {
             accept_invalid_certs: self.accept_invalid_certs,
             #[cfg(not(target_arch = "wasm32"))]
             trusted_hosts,
-            #[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
+            #[cfg(feature = "websockets")]
             authorization,
             timeout: self.timeout,
             headers,
             default_account_id,
-            #[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
+            #[cfg(feature = "websockets")]
             ws: None.into(),
         })
     }

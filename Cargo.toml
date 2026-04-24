@@ -33,11 +33,12 @@ rustls = { version = "0.23", optional = true, default-features = false, features
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 reqwest = { version = "0.13", default-features = false }
 getrandom = { version = "0.3", features = ["wasm_js"] }
+gloo-net = { version = "0.6", default-features = false, features = ["websocket"], optional = true }
 
 [features]
 default = ["async", "websockets", "aws_lc_rs"]
 async = ["futures-util", "async-stream", "reqwest/stream"]
-websockets = ["tokio", "tokio-tungstenite", "rustls"]
+websockets = ["async", "tokio", "tokio-tungstenite", "rustls", "gloo-net"]
 blocking = ["reqwest/blocking", "maybe-async/is_sync"]
 ring = ["rustls?/ring"]
 aws_lc_rs = ["rustls?/aws_lc_rs"]

@@ -15,20 +15,27 @@ use std::sync::Arc;
 
 use ahash::AHashMap;
 use futures_util::{stream::SplitSink, SinkExt, Stream, StreamExt};
+use serde::{Deserialize, Serialize};
+
+#[cfg(not(target_arch = "wasm32"))]
 use reqwest::header::SEC_WEBSOCKET_PROTOCOL;
 #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     ClientConfig, SignatureScheme,
 };
-use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::net::TcpStream;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio_tungstenite::{
-    tungstenite::{client::IntoClientRequest, Message},
+    tungstenite::{client::IntoClientRequest, Message as TungsteniteMessage},
     MaybeTlsStream, WebSocketStream,
 };
 #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
 use tokio_tungstenite::Connector;
+
+#[cfg(target_arch = "wasm32")]
+use gloo_net::websocket::{futures::WebSocket as GlooWebSocket, Message as GlooMessage};
 
 use crate::{
     client::Client,
@@ -160,9 +167,27 @@ pub enum WebSocketMessage {
     PushNotification(PushObject),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, TungsteniteMessage>;
+
+#[cfg(target_arch = "wasm32")]
+type WsSink = SplitSink<GlooWebSocket, GlooMessage>;
+
 pub struct WsStream {
-    tx: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
+    tx: WsSink,
     req_id: usize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn send_text(tx: &mut WsSink, body: String) -> crate::Result<()> {
+    tx.send(TungsteniteMessage::text(body)).await?;
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn send_text(tx: &mut WsSink, body: String) -> crate::Result<()> {
+    tx.send(GlooMessage::Text(body)).await?;
+    Ok(())
 }
 
 #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
@@ -231,61 +256,81 @@ impl Client {
             )
         })?;
 
-        let mut request = capabilities.url().into_client_request()?;
-        request
-            .headers_mut()
-            .insert("Authorization", self.authorization.parse().unwrap());
-        request
-            .headers_mut()
-            .insert(SEC_WEBSOCKET_PROTOCOL, "jmap".parse().unwrap());
+        #[cfg(not(target_arch = "wasm32"))]
+        let (tx, mut rx) = {
+            let mut request = capabilities.url().into_client_request()?;
+            request
+                .headers_mut()
+                .insert("Authorization", self.authorization.parse().unwrap());
+            request
+                .headers_mut()
+                .insert(SEC_WEBSOCKET_PROTOCOL, "jmap".parse().unwrap());
 
-        #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
-        let (stream, _) = if self.accept_invalid_certs & capabilities.url().starts_with("wss") {
-            tokio_tungstenite::connect_async_tls_with_config(
-                request,
-                None,
-                false,
-                Connector::Rustls(Arc::new(
-                    ClientConfig::builder()
-                        .dangerous()
-                        .with_custom_certificate_verifier(Arc::new(DummyVerifier {}))
-                        .with_no_client_auth(),
-                ))
-                .into(),
-            )
-            .await?
-        } else {
-            tokio_tungstenite::connect_async(request).await?
+            #[cfg(feature = "accept_invalid_certs")]
+            let (stream, _) = if self.accept_invalid_certs & capabilities.url().starts_with("wss") {
+                tokio_tungstenite::connect_async_tls_with_config(
+                    request,
+                    None,
+                    false,
+                    Connector::Rustls(Arc::new(
+                        ClientConfig::builder()
+                            .dangerous()
+                            .with_custom_certificate_verifier(Arc::new(DummyVerifier {}))
+                            .with_no_client_auth(),
+                    ))
+                    .into(),
+                )
+                .await?
+            } else {
+                tokio_tungstenite::connect_async(request).await?
+            };
+            #[cfg(not(feature = "accept_invalid_certs"))]
+            let (stream, _) = tokio_tungstenite::connect_async(request).await?;
+
+            stream.split()
         };
-        #[cfg(not(feature = "accept_invalid_certs"))]
-        let (stream, _) = tokio_tungstenite::connect_async(request).await?;
-        let (tx, mut rx) = stream.split();
+
+        // Browsers cannot set arbitrary headers on a WebSocket handshake. Auth
+        // must be conveyed out-of-band (cookie, query string, or first message).
+        #[cfg(target_arch = "wasm32")]
+        let (tx, mut rx) = {
+            let stream = GlooWebSocket::open_with_protocol(capabilities.url(), "jmap")
+                .map_err(|e| crate::Error::WebSocket(e.to_string()))?;
+            stream.split()
+        };
 
         *self.ws.lock().await = WsStream { tx, req_id: 0 }.into();
 
         Ok(Box::pin(async_stream::stream! {
             while let Some(message) = rx.next().await {
-                match message {
-                    Ok(message) if message.is_text() => {
-                        match serde_json::from_slice::<WebSocketMessage_>(&message.into_data()) {
-                            Ok(message) => match message {
-                                WebSocketMessage_::Response(response) => {
-                                    yield Ok(WebSocketMessage::Response(Response::new(
-                                        response.method_responses,
-                                        response.created_ids,
-                                        response.session_state,
-                                        response.request_id,
-                                    )))
-                                }
-                                WebSocketMessage_::PushNotification(push) => {
-                                    yield Ok(WebSocketMessage::PushNotification(push.push))
-                                }
-                                WebSocketMessage_::Error(err) => yield Err(ProblemDetails::from(err).into()),
-                            },
-                            Err(err) => yield Err(err.into()),
-                        }
+                #[cfg(not(target_arch = "wasm32"))]
+                let parsed = match message {
+                    Ok(m) if m.is_text() => Some(serde_json::from_slice::<WebSocketMessage_>(&m.into_data())),
+                    Ok(_) => None,
+                    Err(err) => { yield Err(err.into()); continue; }
+                };
+
+                #[cfg(target_arch = "wasm32")]
+                let parsed = match message {
+                    Ok(GlooMessage::Text(s)) => Some(serde_json::from_str::<WebSocketMessage_>(&s)),
+                    Ok(GlooMessage::Bytes(_)) => None,
+                    Err(err) => { yield Err(err.into()); continue; }
+                };
+
+                let Some(parsed) = parsed else { continue; };
+                match parsed {
+                    Ok(WebSocketMessage_::Response(response)) => {
+                        yield Ok(WebSocketMessage::Response(Response::new(
+                            response.method_responses,
+                            response.created_ids,
+                            response.session_state,
+                            response.request_id,
+                        )))
                     }
-                    Ok(_) => (),
+                    Ok(WebSocketMessage_::PushNotification(push)) => {
+                        yield Ok(WebSocketMessage::PushNotification(push.push))
+                    }
+                    Ok(WebSocketMessage_::Error(err)) => yield Err(ProblemDetails::from(err).into()),
                     Err(err) => yield Err(err.into()),
                 }
             }
@@ -298,22 +343,18 @@ impl Client {
             .as_mut()
             .ok_or_else(|| crate::Error::Internal("Websocket stream not set.".to_string()))?;
 
-        // Assign request id
         let request_id = ws.req_id.to_string();
         ws.req_id += 1;
 
-        ws.tx
-            .send(Message::text(
-                serde_json::to_string(&WebSocketRequest {
-                    _type: WebSocketRequestType::Request,
-                    id: request_id.clone().into(),
-                    using: request.using,
-                    method_calls: request.method_calls,
-                    created_ids: request.created_ids,
-                })
-                .unwrap_or_default(),
-            ))
-            .await?;
+        let body = serde_json::to_string(&WebSocketRequest {
+            _type: WebSocketRequestType::Request,
+            id: request_id.clone().into(),
+            using: request.using,
+            method_calls: request.method_calls,
+            created_ids: request.created_ids,
+        })
+        .unwrap_or_default();
+        send_text(&mut ws.tx, body).await?;
 
         Ok(request_id)
     }
@@ -323,51 +364,49 @@ impl Client {
         data_types: Option<impl IntoIterator<Item = DataType>>,
         push_state: Option<impl Into<String>>,
     ) -> crate::Result<()> {
-        self.ws
-            .lock()
-            .await
+        let mut _ws = self.ws.lock().await;
+        let ws = _ws
             .as_mut()
-            .ok_or_else(|| crate::Error::Internal("Websocket stream not set.".to_string()))?
-            .tx
-            .send(Message::text(
-                serde_json::to_string(&WebSocketPushEnable {
-                    _type: WebSocketPushEnableType::WebSocketPushEnable,
-                    data_types: data_types.map(|it| it.into_iter().collect()),
-                    push_state: push_state.map(|it| it.into()),
-                })
-                .unwrap_or_default(),
-            ))
-            .await
-            .map_err(|err| err.into())
+            .ok_or_else(|| crate::Error::Internal("Websocket stream not set.".to_string()))?;
+
+        let body = serde_json::to_string(&WebSocketPushEnable {
+            _type: WebSocketPushEnableType::WebSocketPushEnable,
+            data_types: data_types.map(|it| it.into_iter().collect()),
+            push_state: push_state.map(|it| it.into()),
+        })
+        .unwrap_or_default();
+        send_text(&mut ws.tx, body).await
     }
 
     pub async fn disable_push_ws(&self) -> crate::Result<()> {
-        self.ws
-            .lock()
-            .await
+        let mut _ws = self.ws.lock().await;
+        let ws = _ws
             .as_mut()
-            .ok_or_else(|| crate::Error::Internal("Websocket stream not set.".to_string()))?
-            .tx
-            .send(Message::text(
-                serde_json::to_string(&WebSocketPushDisable {
-                    _type: WebSocketPushDisableType::WebSocketPushDisable,
-                })
-                .unwrap_or_default(),
-            ))
-            .await
-            .map_err(|err| err.into())
+            .ok_or_else(|| crate::Error::Internal("Websocket stream not set.".to_string()))?;
+
+        let body = serde_json::to_string(&WebSocketPushDisable {
+            _type: WebSocketPushDisableType::WebSocketPushDisable,
+        })
+        .unwrap_or_default();
+        send_text(&mut ws.tx, body).await
     }
 
+    /// Sends a WebSocket ping frame.
+    ///
+    /// On `wasm32` targets the browser handles ping/pong internally and this
+    /// method is a no-op (only verifying the stream is connected).
     pub async fn ws_ping(&self) -> crate::Result<()> {
-        self.ws
-            .lock()
-            .await
+        let mut _ws = self.ws.lock().await;
+        let ws = _ws
             .as_mut()
-            .ok_or_else(|| crate::Error::Internal("Websocket stream not set.".to_string()))?
-            .tx
-            .send(Message::Ping(vec![].into()))
-            .await
-            .map_err(|err| err.into())
+            .ok_or_else(|| crate::Error::Internal("Websocket stream not set.".to_string()))?;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        ws.tx.send(TungsteniteMessage::Ping(vec![].into())).await?;
+        #[cfg(target_arch = "wasm32")]
+        let _ = ws;
+
+        Ok(())
     }
 }
 

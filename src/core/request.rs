@@ -494,7 +494,7 @@ impl<'x> Request<'x> {
         self.client.send(&self).await
     }
 
-    #[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
+    #[cfg(feature = "websockets")]
     pub async fn send_ws(self) -> crate::Result<String> {
         self.client.send_ws(self).await
     }

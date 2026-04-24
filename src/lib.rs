@@ -203,7 +203,7 @@ use ahash::AHashMap;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
-#[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
+#[cfg(feature = "websockets")]
 pub mod client_ws;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -427,8 +427,8 @@ pub enum Error {
     Server(String),
     Method(MethodError),
     Set(SetError<String>),
-    #[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
-    WebSocket(tokio_tungstenite::tungstenite::error::Error),
+    #[cfg(feature = "websockets")]
+    WebSocket(String),
 }
 
 impl std::error::Error for Error {}
@@ -472,7 +472,14 @@ impl From<&str> for Error {
 #[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
 impl From<tokio_tungstenite::tungstenite::error::Error> for Error {
     fn from(e: tokio_tungstenite::tungstenite::error::Error) -> Self {
-        Error::WebSocket(e)
+        Error::WebSocket(e.to_string())
+    }
+}
+
+#[cfg(all(feature = "websockets", target_arch = "wasm32"))]
+impl From<gloo_net::websocket::WebSocketError> for Error {
+    fn from(e: gloo_net::websocket::WebSocketError) -> Self {
+        Error::WebSocket(e.to_string())
     }
 }
 
@@ -486,7 +493,7 @@ impl Display for Error {
             Error::Server(e) => write!(f, "Server failed: {}", e),
             Error::Method(e) => write!(f, "Request failed: {}", e),
             Error::Set(e) => write!(f, "Set failed: {}", e),
-            #[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
+            #[cfg(feature = "websockets")]
             Error::WebSocket(e) => write!(f, "WebSockets error: {}", e),
         }
     }
