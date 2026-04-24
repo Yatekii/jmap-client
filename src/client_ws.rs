@@ -10,13 +10,13 @@
  */
 
 use std::pin::Pin;
-#[cfg(feature = "accept_invalid_certs")]
+#[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
 use std::sync::Arc;
 
 use ahash::AHashMap;
 use futures_util::{stream::SplitSink, SinkExt, Stream, StreamExt};
 use reqwest::header::SEC_WEBSOCKET_PROTOCOL;
-#[cfg(feature = "accept_invalid_certs")]
+#[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     ClientConfig, SignatureScheme,
@@ -27,7 +27,7 @@ use tokio_tungstenite::{
     tungstenite::{client::IntoClientRequest, Message},
     MaybeTlsStream, WebSocketStream,
 };
-#[cfg(feature = "accept_invalid_certs")]
+#[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
 use tokio_tungstenite::Connector;
 
 use crate::{
@@ -165,12 +165,12 @@ pub struct WsStream {
     req_id: usize,
 }
 
-#[cfg(feature = "accept_invalid_certs")]
+#[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
 #[doc(hidden)]
 #[derive(Debug)]
 struct DummyVerifier;
 
-#[cfg(feature = "accept_invalid_certs")]
+#[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
 impl ServerCertVerifier for DummyVerifier {
     fn verify_server_cert(
         &self,
@@ -239,7 +239,7 @@ impl Client {
             .headers_mut()
             .insert(SEC_WEBSOCKET_PROTOCOL, "jmap".parse().unwrap());
 
-        #[cfg(feature = "accept_invalid_certs")]
+        #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
         let (stream, _) = if self.accept_invalid_certs & capabilities.url().starts_with("wss") {
             tokio_tungstenite::connect_async_tls_with_config(
                 request,

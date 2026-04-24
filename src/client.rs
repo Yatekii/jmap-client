@@ -63,12 +63,12 @@ pub struct Client {
     headers: header::HeaderMap,
     default_account_id: String,
     timeout: Duration,
-    #[cfg(feature = "accept_invalid_certs")]
+    #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
     pub(crate) accept_invalid_certs: bool,
 
-    #[cfg(feature = "websockets")]
+    #[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
     pub(crate) authorization: String,
-    #[cfg(feature = "websockets")]
+    #[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
     pub(crate) ws: tokio::sync::Mutex<Option<crate::client_ws::WsStream>>,
 }
 
@@ -77,7 +77,7 @@ pub struct ClientBuilder {
     #[cfg(not(target_arch = "wasm32"))]
     trusted_hosts: AHashSet<String>,
     forwarded_for: Option<String>,
-    #[cfg(feature = "accept_invalid_certs")]
+    #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
     accept_invalid_certs: bool,
     timeout: Duration,
 }
@@ -99,7 +99,7 @@ impl ClientBuilder {
             trusted_hosts: AHashSet::new(),
             timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
             forwarded_for: None,
-            #[cfg(feature = "accept_invalid_certs")]
+            #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
             accept_invalid_certs: false,
         }
     }
@@ -160,7 +160,7 @@ impl ClientBuilder {
     /// **It is not suggested to use this approach in production;** this method should be used only for testing and as a last resort.
     ///
     /// [Read more in the reqwest docs](https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html#method.danger_accept_invalid_certs)
-    #[cfg(feature = "accept_invalid_certs")]
+    #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
     pub fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
         self.accept_invalid_certs = accept_invalid_certs;
         self
@@ -221,10 +221,10 @@ impl ClientBuilder {
 
         let session_url = format!("{}/.well-known/jmap", url);
 
-        let builder = HttpClient::builder()
-            .timeout(self.timeout)
-            .default_headers(headers.clone());
-        #[cfg(feature = "accept_invalid_certs")]
+        let builder = HttpClient::builder().default_headers(headers.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.timeout(self.timeout);
+        #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
         let builder = builder.danger_accept_invalid_certs(self.accept_invalid_certs);
         #[cfg(not(target_arch = "wasm32"))]
         let builder = {
@@ -278,16 +278,16 @@ impl ClientBuilder {
             session: parking_lot::Mutex::new(Arc::new(session)),
             session_url,
             session_updated: true.into(),
-            #[cfg(feature = "accept_invalid_certs")]
+            #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
             accept_invalid_certs: self.accept_invalid_certs,
             #[cfg(not(target_arch = "wasm32"))]
             trusted_hosts,
-            #[cfg(feature = "websockets")]
+            #[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
             authorization,
             timeout: self.timeout,
             headers,
             default_account_id,
-            #[cfg(feature = "websockets")]
+            #[cfg(all(feature = "websockets", not(target_arch = "wasm32")))]
             ws: None.into(),
         })
     }
@@ -356,10 +356,10 @@ impl Client {
     where
         R: DeserializeOwned,
     {
-        let builder = HttpClient::builder()
-            .timeout(self.timeout)
-            .default_headers(self.headers.clone());
-        #[cfg(feature = "accept_invalid_certs")]
+        let builder = HttpClient::builder().default_headers(self.headers.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.timeout(self.timeout);
+        #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
         let builder = builder.danger_accept_invalid_certs(self.accept_invalid_certs);
         #[cfg(not(target_arch = "wasm32"))]
         let builder = builder.redirect(self.redirect_policy());
@@ -387,10 +387,10 @@ impl Client {
 
     #[maybe_async::maybe_async]
     pub async fn refresh_session(&self) -> crate::Result<()> {
-        let builder = HttpClient::builder()
-            .timeout(Duration::from_millis(DEFAULT_TIMEOUT_MS))
-            .default_headers(self.headers.clone());
-        #[cfg(feature = "accept_invalid_certs")]
+        let builder = HttpClient::builder().default_headers(self.headers.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.timeout(Duration::from_millis(DEFAULT_TIMEOUT_MS));
+        #[cfg(all(feature = "accept_invalid_certs", not(target_arch = "wasm32")))]
         let builder = builder.danger_accept_invalid_certs(self.accept_invalid_certs);
         #[cfg(not(target_arch = "wasm32"))]
         let builder = builder.redirect(self.redirect_policy());
